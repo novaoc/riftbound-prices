@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
+
+FRESHNESS_SECONDS = 86400
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 @dataclass
@@ -16,7 +22,7 @@ class Listing:
     date_sold: Optional[str] = None
     is_auction: bool = False
     grade: Optional[str] = None
-    product_type: str = "single"  # single, sealed, graded
+    product_type: str = "single"
 
 
 @dataclass
@@ -56,3 +62,33 @@ class PriceResult:
     @property
     def max_price(self) -> float:
         return round(max(self.prices), 2) if self.prices else 0.0
+
+
+@dataclass
+class TrackedCard:
+    name: str
+    set_name: str
+    rarity: str = ""
+    product_type: str = "single"
+    tcgplayer_id: Optional[int] = None
+    url: str = ""
+    last_price: float = 0.0
+    last_updated: Optional[datetime] = None
+    is_foil: bool = False
+    id: Optional[int] = None
+
+    def is_stale(self) -> bool:
+        if self.last_updated is None:
+            return True
+        age = (now_utc() - self.last_updated).total_seconds()
+        return age > FRESHNESS_SECONDS
+
+    @property
+    def age_seconds(self) -> float:
+        if self.last_updated is None:
+            return float("inf")
+        return (now_utc() - self.last_updated).total_seconds()
+
+    @property
+    def age_hours(self) -> float:
+        return self.age_seconds / 3600

@@ -1,67 +1,106 @@
 from __future__ import annotations
 
 import argparse
-import sys
 
 from rich.table import Table
 from rich.panel import Panel
+from rich import print
 
-from .models import Listing, PriceResult
-from .prices import search_prices, combine_results, group_by_grade, group_by_product_type
+from .db import (
+    add_card,
+    card_count,
+    get_all_cards,
+    get_card_by_name,
+    init_db,
+    remove_card_by_name,
+)
+from .models import PriceResult, TrackedCard
+from .prices import (
+    combine_results,
+    discover_all_cards,
+    group_by_grade,
+    group_by_product_type,
+    search_prices,
+    update_tracked_cards,
+)
 from .utils import format_price
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def main() -> None:
+    init_db()
+
     parser = argparse.ArgumentParser(
         prog="riftbound-prices",
-        description="Riftbound TCG Price Tracker — search card prices from eBay & TCGplayer",
+        description="Riftbound TCG Price Tracker — track card prices from TCGplayer",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("query", nargs="+", help="Card name, product, or search terms")
-    parser.add_argument("--type", choices=["single", "sealed", "graded"], default="single",
-                        help="Product type (default: single)")
-    parser.add_argument("--grade", help="Filter by grade (e.g. 'PSA 10', 'BGS 9.5')")
-    parser.add_argument("--condition", help="Filter by condition (e.g. 'Near Mint', 'New')")
-    parser.add_argument("--max", type=int, default=20, help="Max results per source (default: 20)")
-    parser.add_argument("--no-ebay", action="store_true", help="Skip eBay source")
-    parser.add_argument("--no-tcgplayer", action="store_true", help="Skip TCGplayer source")
-    parser.add_argument("--group-by", choices=["grade", "type", "none"], default="none",
-                        help="Group results by grade or product type")
+
+    sub = parser.add_subparsers(dest="command")
+
+    search_parser = sub.add_parser("search", help="Search for card prices")
+    search_parser.add_argument("query", nargs="+", help="Card name or search terms")
+    search_parser.add_argument("--type", choices=["single", "sealed", "graded"], default="single")
+    search_parser.add_argument("--grade", help="Filter by grade (e.g. 'PSA 10')")
+    search_parser.add_argument("--condition", help="Filter by condition (e.g. 'Near Mint')")
+    search_parser.add_argument("--max", type=int, default=20, help="Max results per source")
+    search_parser.add_argument("--group-by", choices=["grade", "type", "none"], default="none")
+
+    track_parser = sub.add_parser("track", help="Add a card to the tracking list")
+    track_parser.add_argument("name", help="Card name")
+    track_parser.add_argument("--set", "-s", dest="set_name", default="", help="Set name")
+    track_parser.add_argument("--rarity", "-r", default="", help="Rarity")
+    track_parser.add_argument("--foil", action="store_true", help="Foil version")
+
+    untrack_parser = sub.add_parser("untrack", help="Remove a card from tracking")
+    untrack_parser.add_argument("name", help="Card name")
+    untrack_parser.add_argument("--set", "-s", dest="set_name", default="")
+
+    sub.add_parser("list", help="Show all tracked cards and their prices")
+
+    sub.add_parser("update", help="Update prices for stale tracked cards")
+
+    sub.add_parser("discover", help="Discover all Riftbound cards from TCGplayer")
+
+    sub.add_parser("status", help="Show database status")
 
     args = parser.parse_args()
 
-    query = " ".join(args.query)
-    product_type = args.type
-    grade = args.grade
-    condition = args.condition
-    max_results = args.max
-    use_ebay = not args.no_ebay
-    use_tcgplayer = not args.no_tcgplayer
-    group_by = args.group_by
+    if args.command == "search":
+        cmd_search(args)
+    elif args.command == "track":
+        cmd_track(args)
+    elif args.command == "untrack":
+        cmd_untrack(args)
+    elif args.command == "list":
+        cmd_list()
+    elif args.command == "update":
+        cmd_update()
+    elif args.command == "discover":
+        cmd_discover()
+    elif args.command == "status":
+        cmd_status()
+    else:
+        parser.print_help()
 
+
+def cmd_search(args: argparse.Namespace) -> None:
+    query = " ".join(args.query)
     print(f"\n  Searching: {query}")
-    print(f"  Type: {product_type}  |  Sources: ", end="")
-    if use_ebay:
-        print("eBay ", end="")
-    if use_tcgplayer:
-        print("TCGplayer ", end="")
-    print()
-    if grade:
-        print(f"  Grade filter: {grade}")
-    if condition:
-        print(f"  Condition filter: {condition}")
+    print(f"  Type: {args.type}")
+    if args.grade:
+        print(f"  Grade: {args.grade}")
+    if args.condition:
+        print(f"  Condition: {args.condition}")
     print()
 
     results = search_prices(
         query=query,
-        product_type=product_type,
-        grade=grade,
-        max_results=max_results,
-        use_ebay=use_ebay,
-        use_tcgplayer=use_tcgplayer,
-        condition=condition,
+        product_type=args.type,
+        grade=args.grade,
+        max_results=args.max,
+        condition=args.condition,
     )
 
     if not results or all(r.sample_size == 0 for r in results):
@@ -70,11 +109,11 @@ def main() -> None:
 
     combined = combine_results(results)
 
-    if group_by == "grade":
+    if args.group_by == "grade":
         groups = group_by_grade(combined.listings)
         for grade_name, grp in groups.items():
             _render_table(grp, title=f"Grade: {grade_name}")
-    elif group_by == "type":
+    elif args.group_by == "type":
         groups = group_by_product_type(combined.listings)
         for type_name, grp in groups.items():
             _render_table(grp, title=f"Type: {type_name}")
@@ -82,6 +121,95 @@ def main() -> None:
         _render_table(combined, title="Results")
 
     _render_summary(combined)
+
+
+def cmd_track(args: argparse.Namespace) -> None:
+    existing = get_card_by_name(args.name, args.set_name, args.foil)
+    if existing:
+        print(f"  Already tracking '{args.name}'")
+        return
+
+    card = TrackedCard(
+        name=args.name,
+        set_name=args.set_name or "",
+        rarity=args.rarity or "",
+        product_type="single",
+        is_foil=args.foil,
+    )
+    card_id = add_card(card)
+    print(f"  Added '{args.name}' to tracking (ID: {card_id})")
+
+
+def cmd_untrack(args: argparse.Namespace) -> None:
+    remove_card_by_name(args.name, args.set_name)
+    print(f"  Removed '{args.name}' from tracking")
+
+
+def cmd_list() -> None:
+    cards = get_all_cards()
+    if not cards:
+        print("  No cards tracked yet. Use 'riftbound-prices discover' or 'riftbound-prices track'")
+        return
+
+    table = Table(title=f"Tracked Cards ({len(cards)})", show_header=True, header_style="bold green", safe_box=True)
+    table.add_column("#", style="dim", width=3)
+    table.add_column("Card", width=35)
+    table.add_column("Set", width=20)
+    table.add_column("Price", justify="right", width=10)
+    table.add_column("Updated", width=20)
+    table.add_column("Status", width=10)
+
+    for i, card in enumerate(cards, 1):
+        price_str = format_price(card.last_price) if card.last_price else "-"
+        updated = card.last_updated.strftime("%Y-%m-%d %H:%M") if card.last_updated else "-"
+        status = "FRESH" if not card.is_stale() else "STALE"
+        status_style = "green" if status == "FRESH" else "yellow"
+
+        table.add_row(
+            str(i),
+            card.name,
+            card.set_name or "-",
+            price_str,
+            updated,
+            f"[{status_style}]{status}[/{status_style}]",
+        )
+
+    print(table)
+    print(f"\n  Total: {len(cards)} cards tracked")
+    stale = len([c for c in cards if c.is_stale()])
+    fresh = len(cards) - stale
+    print(f"  Fresh: {fresh}  |  Stale: {stale}")
+    if stale > 0:
+        print(f"  Run 'riftbound-prices update' to refresh stale prices")
+
+
+def cmd_update() -> None:
+    print("  Checking for stale cards...")
+    updated, errors = update_tracked_cards()
+    if updated == 0 and errors == 0:
+        print("  All cards are fresh! (updated within 24h)")
+    else:
+        print(f"  Updated: {updated}  |  Errors: {errors}")
+
+
+def cmd_discover() -> None:
+    print("  Discovering all Riftbound cards from TCGplayer...")
+    print("  This will take a minute (loading each set page)")
+    count = discover_all_cards()
+    total = card_count()
+    print(f"\n  Added {count} new cards to database")
+    print(f"  Total cards in database: {total}")
+
+
+def cmd_status() -> None:
+    total = card_count()
+    print(f"\n  Database: ~/.cache/riftbound-prices/cards.db")
+    print(f"  Cards tracked: {total}")
+    if total > 0:
+        cards = get_all_cards()
+        stale = len([c for c in cards if c.is_stale()])
+        print(f"  Fresh: {total - stale}  |  Stale: {stale}  |  TTL: 24h")
+    print(f"  Cache: ~/.cache/riftbound-prices/ (json files, 24h TTL)")
 
 
 def _render_table(result: PriceResult, title: str = "Results") -> None:
@@ -93,6 +221,7 @@ def _render_table(result: PriceResult, title: str = "Results") -> None:
         show_header=True,
         header_style="bold magenta",
         title_justify="left",
+        safe_box=True,
     )
     table.add_column("#", style="dim", width=3)
     table.add_column("Price", justify="right", width=10)

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, Any
 
 CACHE_DIR = Path.home() / ".cache" / "riftbound-prices"
-CACHE_TTL = 3600
+CACHE_TTL = 86400
 
 
 def get_cache_path(key: str) -> Path:
