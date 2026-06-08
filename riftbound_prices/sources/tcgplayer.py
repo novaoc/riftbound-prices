@@ -11,14 +11,13 @@ from ..models import Listing, PriceResult
 from ..utils import cache_get, cache_set
 from .base import PriceSource
 
-SEARCH_URL = "https://www.tcpPlayer.com/search/riftbound-league-of-legends-trading-card-game/product"
+SEARCH_URL = "https://www.tcgplayer.com/search/riftbound-league-of-legends-trading-card-game/product"
 
 
 class TCGPlayerSource(PriceSource):
     name = "TCGplayer"
 
-    def __init__(self, max_retries: int = 2) -> None:
-        self.max_retries = max_retries
+    def __init__(self) -> None:
         self.client = httpx.Client(
             headers={
                 "User-Agent": (
@@ -27,7 +26,7 @@ class TCGPlayerSource(PriceSource):
                     "Chrome/120.0.0.0 Safari/537.36"
                 ),
                 "Accept": "text/html,application/xhtml+xml",
-                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Language": "en-US,en;q=0.9",
             },
             follow_redirects=True,
             timeout=15,
@@ -74,40 +73,63 @@ class TCGPlayerSource(PriceSource):
         try:
             resp = self.client.get(url)
             resp.raise_for_status()
-            return self._parse_search(resp.text, max_results)
+            return self._parse_search(resp.text)
         except Exception as e:
             print(f"  [TCGplayer error] {e}")
             return []
 
-    def _parse_search(self, html: str, max_results: int) -> list[Listing]:
+    def _parse_search(self, html: str) -> list[Listing]:
         soup = BeautifulSoup(html, "html.parser")
         listings: list[Listing] = []
-        products = soup.select('[class*="product"], [class*="card"], article')[:max_results]
 
-        for product in products:
+        cards = soup.select(
+            "a[class*='product'], "
+            "[class*='search-result'], "
+            "[class*='listing'], "
+            "article, "
+            ".product-listing"
+        )
+        if not cards:
+            cards = soup.find_all("a", href=re.compile(r"/product/\d+"))
+
+        seen = set()
+        for card in cards:
             try:
-                title_el = product.select_one(
-                    "a[class**='name'], "
-                    "[class*='title'] a, "
-                    "h3 a, h2 a"
+                title_el = card.select_one(
+                    "[class*='name'], "
+                    "[class*='title'], "
+                    "[class*='card-name'], "
+                    "h3, h2, h4"
                 )
-                price_el = product.select_one(
-                    "[class*='price'], "
-                    "[class*='market'], "
-                    "[data-price]"
-                )
-                if not title_el or not price_el:
+                if not title_el:
+                    continue
+                title = title_el.get_text(strip=True)
+                if not title or title in seen:
                     continue
 
-                title = title_el.get_text(strip=True)
+                price_el = card.select_one(
+                    "[class*='price'], "
+                    "[class*='market'], "
+                    "[data-price], "
+                    "[class*='listing-price']"
+                )
+                if not price_el:
+                    continue
                 price_text = price_el.get_text(strip=True)
-                url = title_el.get("href", "")
+
+                url = card.get("href", "") if card.name == "a" else ""
+                if not url:
+                    link = card.select_one("a[href]")
+                    if link:
+                        url = link.get("href", "")
                 if url and not url.startswith("http"):
                     url = f"https://www.tcgplayer.com{url}"
 
                 price = self._parse_price(price_text)
                 if price <= 0:
                     continue
+
+                seen.add(title)
 
                 grade = self._detect_grade(title)
 
@@ -129,6 +151,8 @@ class TCGPlayerSource(PriceSource):
     @staticmethod
     def _parse_price(text: str) -> float:
         cleaned = re.sub(r"[^\d.,]", "", text)
+        if " - " in text:
+            cleaned = cleaned.split(" - ")[0]
         cleaned = cleaned.replace(",", "")
         try:
             return float(cleaned)
@@ -138,16 +162,16 @@ class TCGPlayerSource(PriceSource):
     @staticmethod
     def _detect_grade(title: str) -> Optional[str]:
         patterns = {
-            "PSA 10": r"PSA\s*10",
-            "PSA 9": r"PSA\s*9",
-            "PSA 8": r"PSA\s*8",
-            "PSA 7": r"PSA\s*7",
-            "BGS 10": r"BGS\s*10",
-            "BGS 9.5": r"BGS\s*9\.5",
-            "BGS 9": r"BGS\s*9",
-            "CGC 10": r"CGC\s*10",
-            "CGC 9.5": r"CGC\s*9\.5",
-            "CGC 9": r"CGC\s*9",
+            "PSA 10": r"PSA\s*10\b",
+            "PSA 9": r"PSA\s*9\b(?!\.)",
+            "PSA 8": r"PSA\s*8\b",
+            "PSA 7": r"PSA\s*7\b",
+            "BGS 10": r"BGS\s*10\b",
+            "BGS 9.5": r"BGS\s*9\.5\b",
+            "BGS 9": r"BGS\s*9\b(?!\.)",
+            "CGC 10": r"CGC\s*10\b",
+            "CGC 9.5": r"CGC\s*9\.5\b",
+            "CGC 9": r"CGC\s*9\b(?!\.)",
         }
         for grade, pattern in patterns.items():
             if re.search(pattern, title, re.IGNORECASE):
@@ -163,7 +187,7 @@ class TCGPlayerSource(PriceSource):
             return "booster_box"
         if any(kw in t for kw in ("psa", "bgs", "cgc")):
             return "graded"
-        if any(kw in t for kw in ("sealed", "factory sealed", "unopened")):
+        if any(kw in t for kw in ("sealed", "factory sealed", "unopened", "pack")):
             return "sealed"
         return "single"
 

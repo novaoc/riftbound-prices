@@ -2,21 +2,15 @@ from __future__ import annotations
 
 import argparse
 import sys
-import os
-from typing import Optional
 
-from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.columns import Columns
 
-__version__ = "0.1.0"
 from .models import Listing, PriceResult
 from .prices import search_prices, combine_results, group_by_grade, group_by_product_type
-from .utils import format_price, load_config, save_config
+from .utils import format_price
 
-console = Console()
-out = Console()
+__version__ = "0.1.0"
 
 
 def main() -> None:
@@ -25,61 +19,19 @@ def main() -> None:
         description="Riftbound TCG Price Tracker — search card prices from eBay & TCGplayer",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-
-    sub = parser.add_subparsers(dest="command")
-
-    # --- search ---
-    search = sub.add_parser("search", help="Search for card/ product prices")
-    search.add_argument("query", nargs="+", help="Card name, product, or search terms")
-    search.add_argument("--type", choices=["single", "sealed", "graded"], default="single",
+    parser.add_argument("query", nargs="+", help="Card name, product, or search terms")
+    parser.add_argument("--type", choices=["single", "sealed", "graded"], default="single",
                         help="Product type (default: single)")
-    search.add_argument("--grade", help="Filter by grade (e.g. 'PSA 10', 'BGS 9.5')")
-    search.add_argument("--condition", help="Filter by condition (e.g. 'Near Mint', 'New')")
-    search.add_argument("--max", type=int, default=20, help="Max results per source (default: 20)")
-    search.add_argument("--no-ebay", action="store_true", help="Skip eBay source")
-    search.add_argument("--no-tcgplayer", action="store_true", help="Skip TCGplayer source")
-    search.add_argument("--group-by", choices=["grade", "type", "none"], default="none",
+    parser.add_argument("--grade", help="Filter by grade (e.g. 'PSA 10', 'BGS 9.5')")
+    parser.add_argument("--condition", help="Filter by condition (e.g. 'Near Mint', 'New')")
+    parser.add_argument("--max", type=int, default=20, help="Max results per source (default: 20)")
+    parser.add_argument("--no-ebay", action="store_true", help="Skip eBay source")
+    parser.add_argument("--no-tcgplayer", action="store_true", help="Skip TCGplayer source")
+    parser.add_argument("--group-by", choices=["grade", "type", "none"], default="none",
                         help="Group results by grade or product type")
-
-    # --- config ---
-    config_parser = sub.add_parser("config", help="Configure settings")
-    config_parser.add_argument("--set-ebay-app-id", help="Set eBay App ID (Client ID)")
-    config_parser.add_argument("--show", action="store_true", help="Show current config")
 
     args = parser.parse_args()
 
-    if args.command == "config":
-        handle_config(args)
-        return
-    elif args.command == "search":
-        handle_search(args)
-    else:
-        if hasattr(args, "query") and args.query:
-            handle_search(args)
-        else:
-            parser.print_help()
-
-
-def handle_config(args: argparse.Namespace) -> None:
-    config = load_config()
-
-    if args.set_ebay_app_id:
-        config["ebay_app_id"] = args.set_ebay_app_id
-        save_config(config)
-        out.print("[green]✓[/green] eBay App ID saved to ~/.config/riftbound-prices/config.json")
-        return
-
-    if args.show:
-        table = Table("Key", "Value", title="Configuration")
-        table.add_row("ebay_app_id", config.get("ebay_app_id", "Not set"))
-        out.print(table)
-        return
-
-    out.print("[yellow]Usage:[/yellow] riftbound-prices config --set-ebay-app-id YOUR_APP_ID")
-    out.print("       riftbound-prices config --show")
-
-
-def handle_search(args: argparse.Namespace) -> None:
     query = " ".join(args.query)
     product_type = args.type
     grade = args.grade
@@ -89,18 +41,18 @@ def handle_search(args: argparse.Namespace) -> None:
     use_tcgplayer = not args.no_tcgplayer
     group_by = args.group_by
 
-    out.print(f"\n[bold]Searching:[/bold] {query}")
-    out.print(f"  Product type: {product_type}  |  Sources: ", end="")
+    print(f"\n  Searching: {query}")
+    print(f"  Type: {product_type}  |  Sources: ", end="")
     if use_ebay:
-        out.print("eBay ", end="")
+        print("eBay ", end="")
     if use_tcgplayer:
-        out.print("TCGplayer ", end="")
-    out.print()
+        print("TCGplayer ", end="")
+    print()
     if grade:
-        out.print(f"  Grade filter: {grade}")
+        print(f"  Grade filter: {grade}")
     if condition:
-        out.print(f"  Condition filter: {condition}")
-    out.print()
+        print(f"  Condition filter: {condition}")
+    print()
 
     results = search_prices(
         query=query,
@@ -113,7 +65,7 @@ def handle_search(args: argparse.Namespace) -> None:
     )
 
     if not results or all(r.sample_size == 0 for r in results):
-        out.print("[yellow]No results found. Try a different query or check your config.[/yellow]")
+        print("  No results found. Try a different query.")
         return
 
     combined = combine_results(results)
@@ -144,7 +96,7 @@ def _render_table(result: PriceResult, title: str = "Results") -> None:
     )
     table.add_column("#", style="dim", width=3)
     table.add_column("Price", justify="right", width=10)
-    table.add_column("Title", width=50, overflow="fold")
+    table.add_column("Title", width=55, overflow="fold")
     table.add_column("Source", width=12)
     table.add_column("Condition", width=14)
     table.add_column("Grade", width=10)
@@ -160,7 +112,7 @@ def _render_table(result: PriceResult, title: str = "Results") -> None:
             listing.grade or "-",
         )
 
-    out.print(table)
+    print(table)
 
 
 def _render_summary(result: PriceResult) -> None:
@@ -171,14 +123,14 @@ def _render_summary(result: PriceResult) -> None:
     summary.add_column(style="bold")
     summary.add_column()
 
-    summary.add_row("Results:", str(result.sample_size))
+    summary.add_row("Listings:", str(result.sample_size))
     summary.add_row("Average:", format_price(result.average_price))
     summary.add_row("Median:", format_price(result.median_price))
     summary.add_row("Low:", format_price(result.min_price))
     summary.add_row("High:", format_price(result.max_price))
 
     panel = Panel(summary, title="[bold]Price Summary[/bold]")
-    out.print(panel)
+    print(panel)
 
 
 if __name__ == "__main__":

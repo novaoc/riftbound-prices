@@ -1,28 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 from typing import Optional, Any
 
-CONFIG_DIR = Path.home() / ".config" / "riftbound-prices"
-CONFIG_FILE = CONFIG_DIR / "config.json"
-CACHE_DIR = CONFIG_DIR / "cache"
-CACHE_TTL = 3600  # 1 hour
-
-
-def load_config() -> dict[str, Any]:
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE) as f:
-            return json.load(f)
-    return {}
-
-
-def save_config(config: dict[str, Any]) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=2)
+CACHE_DIR = Path.home() / ".cache" / "riftbound-prices"
+CACHE_TTL = 3600
 
 
 def get_cache_path(key: str) -> Path:
@@ -37,6 +21,7 @@ def cache_get(key: str) -> Optional[Any]:
         return None
     age = time.time() - path.stat().st_mtime
     if age > CACHE_TTL:
+        path.unlink(missing_ok=True)
         return None
     with open(path) as f:
         return json.load(f)
