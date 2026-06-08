@@ -10,12 +10,12 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.columns import Columns
 
-from . import __version__
+__version__ = "0.1.0"
 from .models import Listing, PriceResult
 from .prices import search_prices, combine_results, group_by_grade, group_by_product_type
 from .utils import format_price, load_config, save_config
 
-console = Console(err=True)
+console = Console()
 out = Console()
 
 
